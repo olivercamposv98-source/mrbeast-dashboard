@@ -88,10 +88,15 @@ def transform(raw: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner="Cargando datos desde Google Sheets...")
 def load_data() -> pd.DataFrame:
-    """Lee la base desde Google Sheets."""
-    from streamlit_gsheets import GSheetsConnection
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    raw = conn.read(ttl=300)
+    """Lee la base desde Google Sheets (endpoint gviz, funciona con hojas
+    compartidas como 'cualquiera con el enlace')."""
+    cfg = st.secrets["connections"]["gsheets"]
+    sheet_id = cfg["spreadsheet"].split("/d/")[1].split("/")[0]
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
+    gid = str(cfg.get("worksheet", "")).strip()
+    if gid and gid != "0":
+        csv_url += f"&gid={gid}"
+    raw = pd.read_csv(csv_url)
     return transform(raw)
 
 
