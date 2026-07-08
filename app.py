@@ -305,6 +305,99 @@ with cb:
     st.dataframe(tt, use_container_width=True)
 st.divider()
 
+# ----------------------------- ANÁLISIS DE PREPARACIÓN -----------------------
+st.markdown("## 🍳 Análisis de preparación y mejora operativa")
+
+prep = fin["prep_min"].dropna()
+prep_pos = prep[prep > 0]
+RUSH_HORAS = [18, 19, 20]
+rush = fin[fin["hora"].isin(RUSH_HORAS)]
+valle = fin[~fin["hora"].isin(RUSH_HORAS)]
+
+p1, p2, p3, p4 = st.columns(4)
+kpi(p1, "Prep. promedio", f"{prep.mean():.0f} min", f"Mediana {prep.median():.0f} min")
+pct30 = (prep > 30).mean() * 100
+kpi(p2, "Pedidos > 30 min", f"{pct30:.0f}%", "en preparación", accent=SECONDARY if pct30 > 30 else PRIMARY)
+pct45 = (prep > 45).mean() * 100
+kpi(p3, "Pedidos > 45 min", f"{pct45:.0f}%", "riesgo de mala reseña", accent=SECONDARY if pct45 > 10 else PRIMARY)
+if len(rush) and len(valle):
+    ratio = rush["prep_min"].mean() / max(valle["prep_min"].mean(), 1)
+    kpi(p4, "Rush vs. resto del día", f"{ratio:.1f}x",
+        f"{rush['prep_min'].mean():.0f} min en rush vs {valle['prep_min'].mean():.0f} min",
+        accent=SECONDARY if ratio > 1.5 else PRIMARY)
+else:
+    kpi(p4, "Rush vs. resto del día", "—", "sin datos suficientes")
+
+st.write("")
+q1, q2 = st.columns([1.4, 1])
+with q1:
+    lineas = fin.pivot_table(index="hora", columns="sucursal", values="prep_min",
+                             aggfunc="mean").reindex(horas)
+    figp = go.Figure()
+    paleta = [PRIMARY, SECONDARY, "#F2C230", "#8A7DFF"]
+    for i, scol in enumerate(lineas.columns):
+        figp.add_scatter(x=[f"{h}:00" for h in horas], y=lineas[scol],
+                         mode="lines+markers", name=scol.replace("Mr. Beast Burger ", ""),
+                         line=dict(color=paleta[i % len(paleta)], width=3))
+    figp.add_hline(y=45, line_dash="dot", line_color=SECONDARY,
+                   annotation_text="45 min (crítico)", annotation_font_color=SECONDARY)
+    fig_layout(figp, 340)
+    figp.update_layout(title="Preparación promedio por hora y sucursal (min)",
+                       legend=dict(orientation="h", y=1.15))
+    st.plotly_chart(figp, use_container_width=True)
+with q2:
+    bins_p = [0, 15, 25, 35, 45, 60, float("inf")]
+    labels_p = ["0–15", "16–25", "26–35", "36–45", "46–60", "60+"]
+    dist_p = pd.cut(prep_pos, bins=bins_p, labels=labels_p).value_counts().reindex(labels_p)
+    colores_p = [PRIMARY] * 4 + [SECONDARY] * 2
+    figpd = go.Figure(go.Bar(x=labels_p, y=dist_p.values, marker_color=colores_p,
+                             text=dist_p.values, textposition="outside"))
+    fig_layout(figpd, 340)
+    figpd.update_layout(title="Distribución del tiempo de prep. (min)")
+    st.plotly_chart(figpd, use_container_width=True)
+
+# --- Puntos de mejora generados con los datos filtrados ---
+insights = []
+por_hora_prep = fin.groupby("hora")["prep_min"].mean().reindex(horas).dropna()
+if len(por_hora_prep):
+    h_crit = int(por_hora_prep.idxmax())
+    insights.append(f"**Hora crítica: {h_crit}:00** — preparación promedio de "
+                    f"{por_hora_prep.max():.0f} min. Refuerza cocina 30–60 min antes.")
+suc_rush = rush.groupby("sucursal")["prep_min"].mean().sort_values(ascending=False)
+if len(suc_rush) >= 2:
+    peor, mejor = suc_rush.index[0], suc_rush.index[-1]
+    gap = suc_rush.iloc[0] - suc_rush.iloc[-1]
+    if gap > 5:
+        insights.append(f"**{peor.replace('Mr. Beast Burger ', '')} es {gap:.0f} min más lenta que "
+                        f"{mejor.replace('Mr. Beast Burger ', '')} en el rush** "
+                        f"({suc_rush.iloc[0]:.0f} vs {suc_rush.iloc[-1]:.0f} min). Misma marca, mismo menú: "
+                        f"auditar procesos, estaciones y dotación de esa cocina contra la mejor.")
+if pct45 > 10:
+    insights.append(f"**{pct45:.0f}% de los pedidos superan 45 min de preparación.** "
+                    f"Considera limitar el radio de entrega o simplificar el menú en horas pico.")
+esp = fin["t_espera"].dropna()
+if len(esp) and esp.quantile(.9) > 15:
+    insights.append(f"**Comida lista esperando al rider:** el 10% de los pedidos espera más de "
+                    f"{esp.quantile(.9):.0f} min tras estar listo. Verifica si se marca 'listo' antes de "
+                    f"tiempo o si la app asigna riders tarde — producto frío = mala reseña sin culpa de cocina.")
+canc_rush = canc[canc["hora"].isin(RUSH_HORAS)]
+if len(canc) and len(canc_rush) / len(canc) > 0.4:
+    insights.append(f"**{len(canc_rush)} de {len(canc)} cancelaciones ocurren en el rush (18–20h)** — "
+                    f"coinciden con la saturación de cocina. Reducir el tiempo prometido o pausar la tienda "
+                    f"5–10 min es mejor que acumular cancelaciones.")
+if len(rush) and len(valle) and ratio > 1.5:
+    insights.append(f"**La cocina rinde bien fuera del rush** ({valle['prep_min'].mean():.0f} min): el problema "
+                    f"es capacidad en pico, no procesos. Prioriza personal/equipos 18–20h y promos en el valle "
+                    f"14–16h para aplanar la demanda.")
+
+if insights:
+    st.markdown("### 🛠️ Puntos de mejora detectados")
+    for ins in insights:
+        st.markdown(f"- {ins}")
+else:
+    st.success("Sin alertas operativas con los filtros actuales. 💪")
+st.divider()
+
 # ----------------------------- TICKET vs MEDIA -------------------------------
 st.markdown("## 🎯 Transacciones vs. ticket promedio")
 
