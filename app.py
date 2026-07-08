@@ -4,10 +4,14 @@ Mr. Beast Burger — Dashboard de Delivery
 Fuente de datos: Google Sheets (reporte exportado de la app de delivery)
 Deploy: Streamlit Cloud + GitHub
 """
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+
+LOGO = Path(__file__).parent / "assets" / "logo.png"
 
 # ----------------------------- CONFIG ---------------------------------------
 st.set_page_config(
@@ -84,20 +88,25 @@ def transform(raw: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=300, show_spinner="Cargando datos desde Google Sheets...")
 def load_data() -> pd.DataFrame:
-    """Lee la base desde Google Sheets. Si falla, devuelve DataFrame vacío."""
-    try:
-        from streamlit_gsheets import GSheetsConnection
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        raw = conn.read(ttl=300)
-        return transform(raw)
-    except Exception:
-        return pd.DataFrame()
+    """Lee la base desde Google Sheets."""
+    from streamlit_gsheets import GSheetsConnection
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    raw = conn.read(ttl=300)
+    return transform(raw)
 
 
-data = load_data()
+gs_error = None
+try:
+    data = load_data()
+except Exception as e:
+    gs_error = e
+    data = pd.DataFrame()
 
 if data.empty:
     st.warning("No se pudo leer Google Sheets. Verifica los *secrets* o sube el reporte manualmente:")
+    if gs_error is not None:
+        with st.expander("🔍 Ver detalle del error de conexión"):
+            st.exception(gs_error)
     up = st.file_uploader("Reporte de delivery (.xlsx o .csv)", type=["xlsx", "csv"])
     if up is None:
         st.stop()
@@ -105,7 +114,10 @@ if data.empty:
     data = transform(raw)
 
 # ----------------------------- FILTROS ---------------------------------------
-st.sidebar.markdown(f"<h2 style='color:{PRIMARY}'>🍔 MR. BEAST BURGER</h2>", unsafe_allow_html=True)
+if LOGO.exists():
+    st.sidebar.image(str(LOGO), use_container_width=True)
+else:
+    st.sidebar.markdown(f"<h2 style='color:{PRIMARY}'>🍔 MR. BEAST BURGER</h2>", unsafe_allow_html=True)
 st.sidebar.caption("Filtros del dashboard")
 
 fmin, fmax = data["fecha"].min(), data["fecha"].max()
@@ -126,7 +138,12 @@ df = data[(data["fecha"] >= f_ini) & (data["fecha"] <= f_fin) & (data["sucursal"
 fin = df[df["finalizado"]]
 canc = df[~df["finalizado"]]
 
-st.markdown("# DASHBOARD DELIVERY")
+if LOGO.exists():
+    h1, h2 = st.columns([1, 5])
+    h1.image(str(LOGO), width=170)
+    h2.markdown("# DASHBOARD DELIVERY")
+else:
+    st.markdown("# DASHBOARD DELIVERY")
 st.caption(f"Período: **{f_ini} → {f_fin}** · Sucursales: {', '.join(s.split()[-1] for s in sucursales_sel) or '—'}")
 
 if df.empty or fin.empty:
